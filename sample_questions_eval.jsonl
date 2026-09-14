@@ -1,0 +1,8 @@
+{"id":"inquiry_route_search","message":"What flights are available from Cairo to Luxor on 2025-09-15?","expected_intent":"inquiry","expected_tool":"search_routes"}
+{"id":"book_simple","message":"I'd like to book a train from Cairo to Alexandria. My customer ID is 3, and I'll pay by credit card.","expected_intent":"book","expected_tool":"book_ticket"}
+{"id":"inquiry_booking_status","message":"Can you check the status of my booking BK-20250801-003?","expected_intent":"inquiry","expected_tool":"get_booking_status"}
+{"id":"refund_eligible","message":"I need to cancel and get a refund for booking BK-20250801-005. My flight is in 3 days.","expected_intent":"refund","expected_tool":"request_refund"}
+{"id":"refund_ineligible","message":"I want a refund for booking BK-20250801-007. The bus leaves in 6 hours.","expected_intent":"refund","expected_tool":"request_refund"}
+{"id":"out_of_scope","message":"Can you recommend a good hotel in Sharm El Sheikh?","expected_intent":"out_of_scope","expected_tool":"none"}
+{"id":"book_no_seats","message":"Book me on route EG-101 please. Customer ID 5, paying with wallet.","expected_intent":"book","expected_tool":"book_ticket"}
+{"id":"inquiry_refund_status","message":"What's the status of my refund for booking BK-20250801-005?","expected_intent":"inquiry","expected_tool":"get_booking_status"}

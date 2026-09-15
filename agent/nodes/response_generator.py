@@ -48,9 +48,18 @@ def _build_facts(state: AgentState, situation: str) -> str:
         lines.append("Apologize briefly and explain what went wrong. Do not say it succeeded.")
 
     else:  # completed
-        lines.append(f"Tools called: {state.get('tools_called')}")
+        tools_called = state.get("tools_called") or []
+        wrote_to_db = any(t in tools_called for t in ("book_ticket", "request_refund", "cancel_booking"))
+        lines.append(f"Tools called: {tools_called}")
         lines.append(f"Results: {state.get('tool_outputs')}")
-        lines.append("This has already happened -- confirm what was done, using the real details above.")
+        if wrote_to_db:
+            lines.append("This has already happened -- confirm what was done, using the real details above.")
+        else:
+            lines.append(
+                "IMPORTANT: this was only a search -- nothing was booked, refunded, or cancelled. "
+                "Present these as available options and ask the customer which one they'd like, "
+                "or what else they need. Do NOT say anything was booked, confirmed, or reserved."
+            )
 
     return "\n".join(lines)
 

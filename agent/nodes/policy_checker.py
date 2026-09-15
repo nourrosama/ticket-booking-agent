@@ -14,6 +14,7 @@ is still the final safety net either way.
 """
 from agent.db import get_connection
 from agent.policy import calculate_refund
+from agent.route_resolver import resolve_route
 from agent.state import AgentState
 
 
@@ -41,35 +42,48 @@ def check_policy(state: AgentState) -> dict:
         }
 
     if intent == "book":
-        route_code = entities.get("route_code")
-        if not route_code:
-            # no specific route picked yet -- nothing to validate,
-            # book_ticket's own seat check is still the final guard
+        resolution = resolve_route(entities)
+
+        if resolution["status"] == "no_criteria":
+            # nothing to search on yet -- ask for more details, no DB hit needed
             return {
                 "policy_ok": True,
-                "policy_applied": "booking_policy::deferred_no_route_selected",
+                "policy_applied": "booking_policy::deferred_no_criteria",
                 "policy_reason": None,
-                "confirmation_required": True,
+                "confirmation_required": False,
             }
 
-        conn = get_connection()
-        route = conn.execute(
-            "SELECT available_seats FROM routes WHERE route_code = ?", (route_code,)
-        ).fetchone()
-        conn.close()
-
-        if route is None:
+        if resolution["status"] == "not_found":
             return {
                 "policy_ok": False,
                 "policy_applied": "booking_policy::route_not_found",
-                "policy_reason": f"No route found matching '{route_code}'.",
+                "policy_reason": "No route found matching those details.",
+                "confirmation_required": False,
+            }
+
+        if resolution["status"] == "ambiguous":
+            # multiple matches -- presenting options isn't destructive, no confirmation needed
+            return {
+                "policy_ok": True,
+                "policy_applied": "booking_policy::multiple_matches",
+                "policy_reason": None,
+                "confirmation_required": False,
+            }
+
+        # resolved to exactly one route
+        route = resolution["route"]
+        if not entities.get("payment_method"):
+            return {
+                "policy_ok": False,
+                "policy_applied": "booking_policy::missing_payment_method",
+                "policy_reason": "I need to know how you'd like to pay before booking.",
                 "confirmation_required": False,
             }
         if route["available_seats"] <= 0:
             return {
                 "policy_ok": False,
                 "policy_applied": "booking_policy::no_overbooking",
-                "policy_reason": f"Route {route_code} has no seats available.",
+                "policy_reason": f"Route {route['route_code']} has no seats available.",
                 "confirmation_required": False,
             }
         return {

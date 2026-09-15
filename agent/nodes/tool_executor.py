@@ -10,6 +10,7 @@ entirely when policy failed or confirmation is still pending) lives
 in graph.py's conditional edges, but a node should never assume it's
 unreachable just because the graph *usually* routes around it.
 """
+from agent.route_resolver import resolve_route
 from agent.state import AgentState
 from agent.tools.book_ticket import book_ticket
 from agent.tools.cancel_booking import cancel_booking
@@ -32,38 +33,36 @@ def execute_tools(state: AgentState) -> dict:
     entities = state.get("entities", {})
 
     if intent == "book":
-        if entities.get("route_code"):
-            if not entities.get("payment_method"):
-                return _no_call("Missing payment_method -- ask the customer how they'd like to pay.")
+        resolution = resolve_route(entities)
 
-            found = search_routes(route_code=entities["route_code"])
-            if not found["routes"]:
-                return _no_call(f"Route {entities['route_code']} not found.")
-            route_id = found["routes"][0]["route_id"]
+        if resolution["status"] in ("no_criteria", "not_found"):
+            # Policy Checker already caught/allowed these -- nothing to do here
+            return _no_call("Not enough information to search or book.")
 
-            inputs = {
-                "customer_id": state["customer_id"],
-                "route_id": route_id,
-                "payment_method": entities["payment_method"],
-            }
-            output = book_ticket(**inputs)
-            return {
-                "tools_called": ["book_ticket"],
-                "tool_inputs": [inputs],
-                "tool_outputs": [output],
-                "error": None if output["success"] else output.get("error"),
-            }
-        else:
-            # no specific route chosen yet -- search and let the
-            # Response Generator present options instead of booking
+        if resolution["status"] == "ambiguous":
+            output = {"success": True, "count": len(resolution["matches"]), "routes": resolution["matches"]}
             inputs = {k: entities[k] for k in ("origin", "destination", "transport_type") if k in entities}
-            output = search_routes(**inputs)
             return {
                 "tools_called": ["search_routes"],
                 "tool_inputs": [inputs],
                 "tool_outputs": [output],
                 "error": None,
             }
+
+        # resolved to exactly one route -- book it
+        route = resolution["route"]
+        inputs = {
+            "customer_id": state["customer_id"],
+            "route_id": route["route_id"],
+            "payment_method": entities["payment_method"],
+        }
+        output = book_ticket(**inputs)
+        return {
+            "tools_called": ["book_ticket"],
+            "tool_inputs": [inputs],
+            "tool_outputs": [output],
+            "error": None if output["success"] else output.get("error"),
+        }
 
     if intent == "inquiry":
         if entities.get("booking_ref"):

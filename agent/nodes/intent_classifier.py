@@ -18,6 +18,10 @@ Classify the customer's message into exactly one of these intents:
 - refund: customer wants to cancel a booking and/or get money back
 - out_of_scope: anything else (financial advice, competitor comparisons, medical travel advice, unrelated topics)
 
+If the message is only asking what's available/scheduled ("what flights are there", "when does the train leave")
+without actually saying they want to book/reserve it, classify as inquiry, not book -- book is for when the
+customer clearly wants to make a reservation.
+
 Respond with the intent and a confidence score from 0 to 1."""
 
 

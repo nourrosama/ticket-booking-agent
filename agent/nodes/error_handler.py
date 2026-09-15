@@ -34,6 +34,7 @@ def handle_error(state: AgentState) -> dict:
         return {
             "retry_count": retry_count,
             "entities": entities,
+            "retrying": True,
             # clear the prior verdict so Policy Checker/Tool Executor
             # re-evaluate cleanly on the next pass through the graph
             "error": None,
@@ -44,6 +45,7 @@ def handle_error(state: AgentState) -> dict:
 
     return {
         "retry_count": retry_count,
+        "retrying": False,
         # error/policy_reason are left as-is here (not cleared) so
         # Response Generator has the real reason to explain to the customer
     }

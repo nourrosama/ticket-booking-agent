@@ -11,6 +11,6 @@ in README as an explicit assumption.
 """
 from datetime import datetime
 
-SIMULATED_NOW = datetime.fromisoformat("2025-09-13T00:00:00")
+SIMULATED_NOW = datetime.fromisoformat("2025-09-16T00:00:00")
 
 MAX_RETRIES = 2

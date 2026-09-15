@@ -3,7 +3,7 @@
 A customer-service agent for a travel platform that handles three kinds of requests —
 **booking** a ticket, **inquiring** about an existing booking/schedule, or requesting a
 **refund/cancellation** — via tool-calling against a local SQLite database. Built with
-**LangGraph** and **Groq** (`llama-3.1-8b-instant`).
+**LangGraph** and **Groq** (`openai/gpt-oss-20b`).
 
 This repo contains **two implementations**, explained in full in §5. The short version:
 `run_agent.py` is the required submission (the assignment's specified ≥6-node architecture);

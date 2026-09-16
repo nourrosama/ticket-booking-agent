@@ -9,7 +9,6 @@ Interactive mode (chat):
 """
 import json
 import sys
-import time
 from pathlib import Path
 
 import click
@@ -20,14 +19,6 @@ from rich.text import Text
 from agent.graph import build_graph
 
 console = Console()
-
-# policy_applied values that mean "just missing one piece of info the
-# customer can supply in their next message" -- worth holding the
-# conversation open for, rather than starting over from scratch
-RECOVERABLE_POLICIES = {
-    "booking_policy::missing_payment_method",
-    "refund_policy::missing_booking_ref",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -46,27 +37,6 @@ def build_output(eval_id: str, state: dict) -> dict:
         "confirmation_required": state.get("confirmation_required", False),
         "confidence": state.get("confidence", 0.0),
     }
-
-
-# ---------------------------------------------------------------------------
-# Resilient graph invocation -- retries transient API/network failures
-# (e.g. Groq connection hiccups on the free tier) a couple of times
-# before giving up. This is separate from the graph's own internal
-# repair loop, which handles business-logic errors (bad route, no
-# seats) -- this handles the call itself failing to complete at all.
-# ---------------------------------------------------------------------------
-
-def invoke_with_retry(graph, state: dict, max_attempts: int = 3, delay_seconds: float = 1.5) -> dict:
-    last_exc = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return graph.invoke(state)
-        except Exception as exc:
-            last_exc = exc
-            if attempt < max_attempts:
-                console.print(f"[dim]  (connection hiccup, retrying {attempt}/{max_attempts - 1}...)[/dim]")
-                time.sleep(delay_seconds)
-    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +70,7 @@ def run_batch(input_path: str, output_path: str) -> None:
         console.print(f"  Message: {message}")
 
         try:
-            state = invoke_with_retry(graph, {
+            state = graph.invoke({
                 "customer_id": 1,   # default customer for eval
                 "message": message,
                 "mode": "batch",
@@ -142,12 +112,9 @@ def run_batch(input_path: str, output_path: str) -> None:
                 "confidence": 0.0,
             })
 
-    # Write outputs.jsonl -- explicit utf-8 so LLM-generated punctuation
-    # (curly quotes, non-breaking hyphens, etc.) never crashes the write
-    # on a system whose default console/file encoding isn't utf-8
+    # Write outputs.jsonl
     output_file.write_text(
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in results) + "\n",
-        encoding="utf-8",
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in results) + "\n"
     )
 
     console.print(f"[bold]Results: {passed}/{total} passed[/bold]")
@@ -169,10 +136,6 @@ def run_interactive(customer_id: int) -> None:
 
     # Tracks whether we're waiting on a yes/no confirmation for a pending action
     pending_state: dict | None = None
-    # Tracks a message that was declined only for missing one piece of
-    # info (e.g. "what's your payment method?") so the next reply can
-    # be combined with it instead of starting a fresh, context-less turn
-    partial_message: str | None = None
 
     while True:
         try:
@@ -190,8 +153,9 @@ def run_interactive(customer_id: int) -> None:
         # --- Confirmation reply handling ---
         if pending_state is not None:
             if user_input.lower() in ("yes", "y", "confirm", "ok", "proceed"):
+                # Re-invoke with confirmed=True so the graph executes the action
                 try:
-                    state = invoke_with_retry(graph, {
+                    state = graph.invoke({
                         **pending_state,
                         "confirmed": True,
                         "mode": "interactive",
@@ -206,25 +170,21 @@ def run_interactive(customer_id: int) -> None:
                 pending_state = None
             continue
 
-        # --- Combine with a held-over partial request, if any ---
-        message = f"{partial_message} {user_input}" if partial_message else user_input
-        partial_message = None
-
         # --- Normal turn ---
         try:
-            state = invoke_with_retry(graph, {
+            state = graph.invoke({
                 "customer_id": customer_id,
-                "message": message,
+                "message": user_input,
                 "mode": "interactive",
             })
 
             _print_response(state)
 
+            # If the agent is waiting for confirmation, save state for next turn
             if state.get("confirmation_required") and not state.get("confirmed"):
-                # Waiting on confirmation -- save state for next turn
                 pending_state = {
                     "customer_id": customer_id,
-                    "message": message,
+                    "message": user_input,
                     "intent": state.get("intent"),
                     "entities": state.get("entities", {}),
                     "policy_ok": state.get("policy_ok"),
@@ -234,11 +194,6 @@ def run_interactive(customer_id: int) -> None:
                     "confirmed": False,
                     "mode": "interactive",
                 }
-            elif (not state.get("policy_ok", True)
-                  and state.get("policy_applied") in RECOVERABLE_POLICIES):
-                # Declined only for missing info -- hold the message so
-                # the next reply can complete it, rather than losing context
-                partial_message = message
 
         except Exception as exc:
             console.print(f"[red]Error: {exc}[/red]")
@@ -249,6 +204,7 @@ def _print_response(state: dict) -> None:
     intent = state.get("intent", "")
     tools = state.get("tools_called", [])
 
+    # Dim metadata line
     meta = Text()
     meta.append(f"intent={intent}", style="dim")
     if tools:

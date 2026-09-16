@@ -1,26 +1,3 @@
-"""
-LangChain @tool wrappers around the existing plain-Python DB
-functions in agent/tools/. This is the ReAct-facing adapter layer --
-the underlying functions (search_routes, book_ticket, etc.) are
-completely untouched and still independently unit-testable with zero
-LLM involvement.
-
-Design choice on customer_id: book_ticket needs a customer_id, but we
-never want the LLM supplying or guessing one -- a session belongs to
-one customer for its whole run (set via --customer-id). Rather than
-fight LangGraph's InjectedState machinery for a single hand-invoked
-node (it's built for the prebuilt ToolNode, not manual .invoke()
-calls), build_tools(customer_id) returns a fresh book_ticket closure
-with the id already baked in. The LLM's tool schema for book_ticket
-never even shows a customer_id parameter, so it's structurally
-impossible for the agent to book under the wrong customer.
-
-The three "sensitive" tools (book_ticket, request_refund,
-cancel_booking) are marked SENSITIVE_TOOL_NAMES purely as a lookup
-set for agent/react_graph.py to decide when to call interrupt() --
-that check happens in the graph, not here. This module only defines
-what the tools ARE and how the LLM should reason about calling them.
-"""
 from typing import Optional
 
 from langchain_core.tools import tool

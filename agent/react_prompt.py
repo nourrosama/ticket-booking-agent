@@ -1,20 +1,3 @@
-"""
-System prompt for the true-ReAct agent.
-
-This is where policy enforcement partly moves from CODE to
-INSTRUCTIONS -- the old agent/nodes/policy_checker.py was Python the
-agent could not disobey. This prompt is what keeps the agent's
-*behavior* aligned with policy before it decides to call a tool; the
-tools' own internal checks (seat availability in book_ticket,
-already-refunded in request_refund, etc.) remain the hard backstop
-that doesn't depend on the LLM following instructions correctly.
-
-Kept deliberately under ~350 words per the assignment's "keep prompts
-compact" constraint -- every sentence here is a rule the smoke test
-or a real conversation can actually violate if it's missing, not
-general flavor text.
-"""
-
 SYSTEM_PROMPT = """You are a customer service agent for a travel booking platform \
 (flights, trains, buses across Egypt and nearby destinations). All monetary \
 values are in EGP.

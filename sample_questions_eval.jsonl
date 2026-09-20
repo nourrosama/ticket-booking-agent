@@ -6,3 +6,11 @@
 {"id":"out_of_scope","message":"Can you recommend a good hotel in Sharm El Sheikh?","expected_intent":"out_of_scope","expected_tool":"none"}
 {"id":"book_no_seats","message":"Book me on route EG-101 please. Customer ID 5, paying with wallet.","expected_intent":"book","expected_tool":"book_ticket"}
 {"id":"inquiry_refund_status","message":"What's the status of my refund for booking BK-20250801-005?","expected_intent":"inquiry","expected_tool":"get_booking_status"}
+{"id":"inquiry_valid_booking","message":"What's the status of my booking BK-20250901-001?","expected_intent":"inquiry","expected_tool":"get_booking_status"}
+{"id":"refund_valid_confirmed","message":"I'd like to cancel and get a refund for booking BK-20250901-002.","expected_intent":"refund","expected_tool":"request_refund"}
+{"id":"refund_already_cancelled","message":"Can I get a refund for booking BK-20250903-005?","expected_intent":"refund","expected_tool":"get_booking_status"}
+{"id":"refund_already_refunded","message":"I want a refund for BK-20250909-018, it was already refunded but I need confirmation.","expected_intent":"refund","expected_tool":"get_booking_status"}
+{"id":"book_valid_route","message":"I want to book a bus from Cairo to Hurghada, paying with my wallet.","expected_intent":"book","expected_tool":"book_ticket"}
+{"id":"inquiry_route_search_valid","message":"Are there any trains from Cairo to Alexandria on September 15?","expected_intent":"inquiry","expected_tool":"search_routes"}
+{"id":"multi_intent_inquiry_refund","message":"Check the status of BK-20250904-007 and cancel it for me.","expected_intent":"inquiry","expected_tool":"get_booking_status"}
+{"id":"book_no_payment_method","message":"I want to book a flight from Cairo to Luxor.","expected_intent":"book","expected_tool":"none"}

@@ -7,19 +7,20 @@ class AgentState(TypedDict, total=False):
     message: str
     mode: Literal["batch", "interactive"]
 
-    # Intent Classifier output
-    intent: Literal["book", "inquiry", "refund", "out_of_scope"]
+    # Intent Classifier output — a list so one message can carry multiple intents
+    intents: list[str]  # e.g. ["book"] or ["inquiry", "refund"]
 
     # Entity Extractor output
     entities: dict
 
     # Policy Checker output
-    policy_applied: str
-    policy_ok: bool
-    policy_reason: Optional[str]
+    intent_policies: list[dict]   # one entry per intent: {intent, policy_ok, policy_applied, policy_reason, confirmation_required}
+    policy_applied: str            # combined string ("; "-joined) for error handler / output contract
+    policy_ok: bool                # True if at least one intent can proceed
+    policy_reason: Optional[str]  # combined failure reasons (None when all pass)
 
     # Confirmation node
-    confirmation_required: bool
+    confirmation_required: bool   # True if any proceeding intent requires it
     confirmed: bool
 
     # Tool Executor output

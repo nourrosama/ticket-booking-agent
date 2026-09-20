@@ -5,10 +5,9 @@ A customer-service agent for a travel platform that handles three kinds of reque
 **refund/cancellation** — via tool-calling against a local SQLite database. Built with
 **LangGraph** and **Groq** (`openai/gpt-oss-20b`).
 
-This repo contains **two implementations**, explained in full in §5. The short version:
-`run_agent.py` is the required submission (the assignment's specified ≥6-node architecture);
-`run_agent_react.py` is a bonus second implementation of the same agent as a strict ReAct
-loop, included to demonstrate the distinction between the two approaches.
+The agent supports **multi-intent messages**: a single customer message can carry more
+than one intent (e.g. "check my booking BK-123 and cancel it"), and the pipeline handles
+all of them in a single pass through the graph.
 
 ---
 
@@ -24,25 +23,17 @@ Requires a `.env` file in the project root:
 GROQ_API_KEY=your_key_here
 ```
 
-**Run the required pipeline:**
 ```bash
 python run_agent.py --batch sample_questions_eval.jsonl --out outputs.jsonl
 python run_agent.py --interactive --customer-id 3
-```
-
-**Run the bonus ReAct agent:**
-```bash
-python run_agent_react.py --batch sample_questions_eval.jsonl --out outputs_react.jsonl
-python run_agent_react.py --interactive --customer-id 3
 ```
 
 ---
 
 ## 2. Architecture — nodes and edges
 
-The graph (`agent/graph.py`) has 7 nodes, matching the assignment's specified architecture
-exactly. `AgentState` (`agent/state.py`) is the shared dict every node reads from and writes
-back into.
+The graph (`agent/graph.py`) has 7 nodes. `AgentState` (`agent/state.py`) is the shared
+dict every node reads from and writes back into.
 
 ```mermaid
 flowchart TD
@@ -63,11 +54,11 @@ flowchart TD
 
 | # | Node | File | LLM? | Job |
 |---|---|---|---|---|
-| 1 | Intent Classifier | `agent/nodes/intent_classifier.py` | Yes | Labels the message `book` / `inquiry` / `refund` / `out_of_scope` |
+| 1 | Intent Classifier | `agent/nodes/intent_classifier.py` | Yes | Labels the message with one or more intents: `book`, `inquiry`, `refund`, `out_of_scope` |
 | 2 | Entity Extractor | `agent/nodes/entity_extractor.py` | Yes | Pulls out route/booking/payment details actually present in the message — never guesses missing ones |
-| 3 | Policy Checker | `agent/nodes/policy_checker.py` | No | Validates against business rules; decides `policy_ok`, why, and whether confirmation is required |
+| 3 | Policy Checker | `agent/nodes/policy_checker.py` | No | Runs a per-intent check for each intent; combines results into an overall policy verdict |
 | 4 | Confirmation | `agent/nodes/confirmation.py` | No | Applies the mode rule — batch always auto-confirms, interactive only confirms if a prior turn already said yes |
-| 5 | Tool Executor | `agent/nodes/tool_executor.py` | No | The only node that calls the 5 DB tools; decides which one(s) based on intent + entities |
+| 5 | Tool Executor | `agent/nodes/tool_executor.py` | No | The only node that calls the 5 DB tools; iterates over per-intent policy results and calls the right tool(s) for each passing intent |
 | 6 | Error Handler | `agent/nodes/error_handler.py` | No | The repair loop — retries one specific fixable error type, capped at `MAX_RETRIES = 2`; everything else is terminal |
 | 7 | Response Generator | `agent/nodes/response_generator.py` | Yes | Writes the customer-facing reply, using a plain-Python situation classification (declined/needs_confirmation/failed/completed) so it can't claim something happened when it didn't |
 
@@ -121,15 +112,15 @@ LLM calls at all.
   both check the booking's current `status` before acting and reject if it's already
   `cancelled`/`refunded`.
 - **Confirmation required for destructive actions** — `policy_checker.py` sets
-  `confirmation_required = True` only for a booking/refund that's actually about to happen
-  (not for read-only searches/lookups); `confirmation.py` then applies the batch-vs-interactive
-  rule on top of that flag.
+  `confirmation_required = True` only for intents that are actually about to write to the DB
+  (booking or refund); `confirmation.py` then applies the batch-vs-interactive rule on top of
+  that flag. If any intent in a multi-intent message requires confirmation, the whole turn
+  waits before anything executes.
 - **Out-of-scope requests** — `policy_checker.py` rejects these outright
   (`policy_ok = False`), so no tool is ever called for them.
 - **The response can't misrepresent what happened** — `response_generator.py` classifies which
   of 4 situations applies (declined / needs_confirmation / failed / completed) in plain Python
-  *before* calling the LLM, and only shows it the facts relevant to that situation. This is
-  what stops it from writing "your flight has been booked" when only a search ran.
+  *before* calling the LLM, and only shows it the facts relevant to that situation.
 
 ---
 
@@ -146,7 +137,7 @@ LLM calls at all.
   from a same-day booking counter, not a per-route seat chart — duplicate seat numbers on the
   same route are possible. Scoped out since it isn't part of the grading criteria.
 - **`confidence` is self-reported by the LLM, not a calibrated probability.** It's produced as
-  part of the structured-output schema the same way the intent label is — a plausible number
+  part of the structured-output schema the same way the intent labels are — a plausible number
   the model generates, not a measured statistic.
 - **The provided `sample_questions_eval.jsonl` references IDs that don't exist in the
   provided seed data** (`BK-20250801-*` and route `EG-101` appear in the eval questions; the
@@ -161,27 +152,7 @@ LLM calls at all.
   guessing — it never books an ambiguous request.
 - **`tool_inputs`/`tool_outputs` in the output contract are lists aligned with `tools_called`
   by index, not a dict keyed by tool name.** A dict would silently lose data if the same tool
-  were ever called twice in one turn (a dict key would just get overwritten).
-
----
-
-## 5. Two implementations — required pipeline vs. bonus ReAct agent
-
-The assignment's overview describes a "ReAct-style tool-calling pattern," but its Architecture
-section explicitly specifies a fixed ≥6-node pipeline (Intent Classifier → Entity Extractor →
-Policy Checker → Tool Executor → Response Generator, plus Confirmation and Error Handler).
-That fixed pipeline is **not** strict ReAct — real ReAct doesn't hardcode a stage order; the
-LLM decides at each step whether and which tool to call, observes the result, and decides the
-next move itself.
-
-Both are included, since they demonstrate different things:
-
-| | `run_agent.py` (required) | `run_agent_react.py` (bonus) |
-|---|---|---|
-| Graph | `agent/graph.py` — 7 nodes | `agent/react_graph.py` — 2 nodes (`agent`, `tools`) |
-| Who decides *whether/which* tool to call | Fixed Python dispatch (`tool_executor.py`'s `if intent == ...`), acting on labels the LLM produced earlier | The LLM itself, via `bind_tools()` — its output *is* the tool call |
-| Who decides *when to stop* | Graph structure (fixed number of stages) | The LLM — loops `agent ⟷ tools` until it emits a message with no tool calls |
-| Business rules | Explicit code (`policy_checker.py`) | Mostly prompt instructions (`agent/react_prompt.py`), with tool-level checks (seat availability, double-refund guards) as the hard backstop |
-| Confirmation | `confirmation.py` node + graph routing | `interrupt()` — the graph physically pauses mid-node, not just the LLM "asking nicely" |
-| `intent` / `policy_applied` / `confidence` in output | Directly reported by dedicated nodes | Reconstructed after the fact from which tools were called (`confidence` has no equivalent, always `null`) |
-| Satisfies the assignment's explicit ≥6-node requirement | Yes | No — 2 nodes |
+  were ever called twice in one turn.
+- **Multi-intent confirmation is all-or-nothing.** If a message has both a read-only intent
+  (inquiry) and a destructive one (book/refund), the whole turn waits for confirmation before
+  any tools run. This is simpler and safer than running the read-only part first.

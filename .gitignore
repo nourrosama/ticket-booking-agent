@@ -34,4 +34,5 @@ dist/
 *.log
 
 # Optional: local/generated data
-data/
+data/*.sqlite
+data/*.db

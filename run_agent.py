@@ -10,12 +10,16 @@ Interactive mode (chat):
 import json
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from agent.graph import build_graph
 
@@ -49,18 +53,15 @@ def build_output(eval_id: str, state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Resilient graph invocation — retries transient API/network failures
-# (e.g. Groq connection hiccups on the free tier) a couple of times
-# before giving up. This is separate from the graph's own internal
-# repair loop, which handles business-logic errors (bad route, no
-# seats) — this handles the call itself failing to complete at all.
+# Resilient graph invocation — retries transient API/network failures.
+# Accepts either an initial-state dict (new turn) or a Command (resume).
 # ---------------------------------------------------------------------------
 
-def invoke_with_retry(graph, state: dict, max_attempts: int = 3, delay_seconds: float = 1.5) -> dict:
+def invoke_with_retry(graph, input_, config: dict, max_attempts: int = 3, delay_seconds: float = 1.5) -> dict:
     last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
-            return graph.invoke(state)
+            return graph.invoke(input_, config=config)
         except Exception as exc:
             last_exc = exc
             if attempt < max_attempts:
@@ -74,6 +75,7 @@ def invoke_with_retry(graph, state: dict, max_attempts: int = 3, delay_seconds: 
 # ---------------------------------------------------------------------------
 
 def run_batch(input_path: str, output_path: str) -> None:
+    # Batch never interrupts, so no checkpointer needed
     graph = build_graph()
     input_file = Path(input_path)
     output_file = Path(output_path)
@@ -99,12 +101,13 @@ def run_batch(input_path: str, output_path: str) -> None:
         console.print(f"[cyan]▶ {eval_id}[/cyan]")
         console.print(f"  Message : {message}")
 
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         try:
             state = invoke_with_retry(graph, {
-                "customer_id": 1,   # default customer for eval
+                "customer_id": 1,
                 "message": message,
                 "mode": "batch",
-            })
+            }, config=config)
 
             actual_intents = state.get("intents", [])
             actual_tools = state.get("tools_called", [])
@@ -117,6 +120,7 @@ def run_batch(input_path: str, output_path: str) -> None:
             )
 
             case_pass = intent_ok and tool_ok
+
             passed += case_pass
 
             status = "[green]PASS[/green]" if case_pass else "[red]FAIL[/red]"
@@ -155,7 +159,11 @@ def run_batch(input_path: str, output_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def run_interactive(customer_id: int) -> None:
-    graph = build_graph()
+    # MemorySaver is required: interrupt() checkpoints state here so
+    # Command(resume=...) can pick up exactly where the graph paused.
+    checkpointer = MemorySaver()
+    graph = build_graph(checkpointer=checkpointer)
+
     console.print(Panel(
         f"[bold green]Ticket Booking Agent[/bold green]\n"
         f"Customer ID: [cyan]{customer_id}[/cyan]\n"
@@ -163,9 +171,9 @@ def run_interactive(customer_id: int) -> None:
         title="Welcome"
     ))
 
-    # Stores just enough to re-run the graph on the confirmation turn
-    # (original message + customer ID — everything else re-derives from those)
-    pending: dict | None = None
+    # thread_id tracks the current in-flight conversation turn.
+    # A fresh UUID starts a new turn; None means no turn is in flight.
+    current_thread_id: str | None = None
     partial_message: str | None = None
 
     while True:
@@ -181,48 +189,51 @@ def run_interactive(customer_id: int) -> None:
             console.print("[dim]Goodbye.[/dim]")
             break
 
-        # --- Confirmation reply ---
-        if pending is not None:
-            if user_input.lower() in ("yes", "y", "confirm", "ok", "proceed"):
+        # --- Check if a previous turn is paused at an interrupt ---
+        if current_thread_id is not None:
+            config = {"configurable": {"thread_id": current_thread_id}}
+            snapshot = graph.get_state(config)
+            if snapshot.tasks:
+                # Graph is waiting for confirmation — resume with the user's reply
                 try:
-                    state = invoke_with_retry(graph, {**pending, "confirmed": True})
-                    pending = None
+                    state = invoke_with_retry(graph, Command(resume=user_input), config=config)
                     _print_response(state)
                 except Exception as exc:
                     console.print(f"[red]Error: {exc}[/red]")
-                    pending = None
-            else:
-                console.print("[dim]Action cancelled.[/dim]")
-                pending = None
-            continue
+                finally:
+                    current_thread_id = None  # this thread is done either way
+                continue
 
         # --- Combine with a held-over partial request, if any ---
         message = f"{partial_message} {user_input}" if partial_message else user_input
         partial_message = None
 
-        # --- Normal turn ---
+        # --- Normal turn: start a fresh thread ---
+        current_thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": current_thread_id}}
+
         try:
             state = invoke_with_retry(graph, {
                 "customer_id": customer_id,
                 "message": message,
                 "mode": "interactive",
-            })
+            }, config=config)
 
             _print_response(state)
 
-            if state.get("confirmation_required") and not state.get("confirmed"):
-                # Save just what we need for the confirmation re-run
-                pending = {
-                    "customer_id": customer_id,
-                    "message": message,
-                    "mode": "interactive",
-                }
-            elif (not state.get("policy_ok", True)
-                  and any(p in (state.get("policy_applied") or "") for p in RECOVERABLE_POLICIES)):
+            # If the graph completed without interrupting, clear the thread
+            snapshot = graph.get_state(config)
+            if not snapshot.tasks:
+                current_thread_id = None
+
+            # Hold partial message if the policy is recoverable
+            if (not state.get("policy_ok", True)
+                    and any(p in (state.get("policy_applied") or "") for p in RECOVERABLE_POLICIES)):
                 partial_message = message
 
         except Exception as exc:
             console.print(f"[red]Error: {exc}[/red]")
+            current_thread_id = None
 
 
 def _print_response(state: dict) -> None:
@@ -230,7 +241,6 @@ def _print_response(state: dict) -> None:
     tools = state.get("tools_called", [])
     response = state.get("final_response", "").strip()
 
-    # Always show intent(s) and tools clearly — even when no tools ran
     t = Table.grid(padding=(0, 2))
     t.add_column(style="dim")
     t.add_column()

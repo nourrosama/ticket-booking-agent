@@ -1,24 +1,31 @@
 """
-Confirmation: acts on the mode flag we agreed on at the start --
-batch mode auto-confirms, interactive mode does not. No LLM call.
+Confirmation: decides whether the current turn is cleared to proceed.
 
-Scope note: this node only decides the *effective* confirmed value
-for this pass through the graph -- it doesn't itself pause and wait
-for a reply. In interactive mode, if confirmation is still pending,
-the graph routes to Response Generator to ask the question and this
-turn ends there; actually holding "we're waiting on booking X" and
-matching the customer's next "yes" back to it is run_agent.py's job
-(the interactive loop), not this node's.
+Batch mode: auto-confirms every destructive action (no human present).
+
+Interactive mode: when confirmation is required, calls LangGraph's
+interrupt() — this pauses the graph mid-execution, saves state to the
+checkpointer, and hands control back to the CLI. The CLI shows the
+pending question, then calls graph.invoke(Command(resume=<user reply>))
+with the same thread_id. The graph resumes here, interrupt() returns
+the reply, and we set confirmed accordingly.
+
+No LLM call in this node.
 """
+from langgraph.types import interrupt
+
 from agent.state import AgentState
 
 
 def confirm(state: AgentState) -> dict:
     if not state.get("confirmation_required"):
-        return {"confirmed": True}  # nothing destructive pending, so nothing to confirm
+        return {"confirmed": True}  # nothing destructive pending
 
     if state["mode"] == "batch":
-        return {"confirmed": True}
+        return {"confirmed": True}  # batch always auto-confirms
 
-    # interactive: only true if a prior turn already set it (customer said yes)
-    return {"confirmed": bool(state.get("confirmed"))}
+    # Interactive: pause here — the graph saves state and returns to the CLI.
+    # When the user replies, Command(resume=<reply>) restarts from this line.
+    human_response = interrupt("Action requires your confirmation. Reply yes to proceed.")
+    confirmed = str(human_response).strip().lower() in ("yes", "y", "confirm", "ok", "proceed")
+    return {"confirmed": confirmed}

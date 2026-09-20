@@ -1,6 +1,6 @@
 """
 Wires all 7 nodes into the graph with LangGraph. This file only
-does routing -- all the actual logic already lives in the node
+does routing — all the actual logic already lives in the node
 functions it imports.
 
 Flow:
@@ -9,6 +9,11 @@ Flow:
   execute_tools -> [route_after_tools] -> handle_error OR generate_response
   handle_error -> [route_after_error] -> check_policy (retry loop) OR generate_response
   generate_response -> END
+
+Checkpointer note: pass a MemorySaver (or other checkpointer) to
+build_graph() for interactive mode — it is required for interrupt/resume
+to work. Batch mode can use build_graph() with no checkpointer since it
+never interrupts.
 """
 from langgraph.graph import END, StateGraph
 
@@ -24,9 +29,9 @@ from agent.state import AgentState
 
 def route_after_confirmation(state: AgentState) -> str:
     if not state.get("policy_ok", False):
-        return "generate_response"  # declined -- nothing to execute
+        return "generate_response"  # declined — nothing to execute
     if state.get("confirmation_required") and not state.get("confirmed"):
-        return "generate_response"  # ask the customer first, don't execute yet
+        return "generate_response"  # confirmation was declined
     return "execute_tools"
 
 
@@ -35,12 +40,10 @@ def route_after_tools(state: AgentState) -> str:
 
 
 def route_after_error(state: AgentState) -> str:
-    # loop back through the policy check with the adjusted entities;
-    # otherwise this is terminal, hand off to Response Generator
     return "check_policy" if state.get("retrying") else "generate_response"
 
 
-def build_graph():
+def build_graph(checkpointer=None):
     graph = StateGraph(AgentState)
 
     graph.add_node("classify_intent", classify_intent)
@@ -74,7 +77,4 @@ def build_graph():
 
     graph.add_edge("generate_response", END)
 
-    return graph.compile()
-
-
-agent_graph = build_graph()
+    return graph.compile(checkpointer=checkpointer)

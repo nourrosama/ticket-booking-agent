@@ -19,7 +19,7 @@ python data/seed.py                 # (re)creates data/travel.sqlite from scratc
 ```
 
 > `data/travel.sqlite` is intentionally excluded from version control (`.gitignore`).
-> Run `seed.py` once after cloning — it creates the database from scratch.
+> Run `seed.py` once after cloning , it creates the database from scratch.
 
 Requires a `.env` file in the project root:
 ```

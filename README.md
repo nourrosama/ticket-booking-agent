@@ -18,6 +18,9 @@ pip install -r requirements.txt
 python data/seed.py                 # (re)creates data/travel.sqlite from scratch
 ```
 
+> `data/travel.sqlite` is intentionally excluded from version control (`.gitignore`).
+> Run `seed.py` once after cloning — it creates the database from scratch.
+
 Requires a `.env` file in the project root:
 ```
 GROQ_API_KEY=your_key_here

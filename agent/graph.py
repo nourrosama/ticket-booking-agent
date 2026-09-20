@@ -1,26 +1,23 @@
 """
-Wires all 7 nodes into the graph with LangGraph. This file only
-does routing — all the actual logic already lives in the node
-functions it imports.
+Wires all 6 nodes into the graph with LangGraph. This file only
+does routing — all logic lives in the node functions it imports.
 
 Flow:
-  classify_intent -> extract_entities -> check_policy -> confirm
+  classify_and_extract -> check_policy -> confirm
     -> [route_after_confirmation] -> execute_tools OR generate_response
   execute_tools -> [route_after_tools] -> handle_error OR generate_response
   handle_error -> [route_after_error] -> check_policy (retry loop) OR generate_response
   generate_response -> END
 
 Checkpointer note: pass a MemorySaver (or other checkpointer) to
-build_graph() for interactive mode — it is required for interrupt/resume
-to work. Batch mode can use build_graph() with no checkpointer since it
-never interrupts.
+build_graph() for interactive mode — required for interrupt/resume.
+Batch mode passes None (auto-confirms, never interrupts).
 """
 from langgraph.graph import END, StateGraph
 
+from agent.nodes.classify_and_extract import classify_and_extract
 from agent.nodes.confirmation import confirm
-from agent.nodes.entity_extractor import extract_entities
 from agent.nodes.error_handler import handle_error
-from agent.nodes.intent_classifier import classify_intent
 from agent.nodes.policy_checker import check_policy
 from agent.nodes.response_generator import generate_response
 from agent.nodes.tool_executor import execute_tools
@@ -29,9 +26,9 @@ from agent.state import AgentState
 
 def route_after_confirmation(state: AgentState) -> str:
     if not state.get("policy_ok", False):
-        return "generate_response"  # declined — nothing to execute
+        return "generate_response"
     if state.get("confirmation_required") and not state.get("confirmed"):
-        return "generate_response"  # confirmation was declined
+        return "generate_response"
     return "execute_tools"
 
 
@@ -46,17 +43,15 @@ def route_after_error(state: AgentState) -> str:
 def build_graph(checkpointer=None):
     graph = StateGraph(AgentState)
 
-    graph.add_node("classify_intent", classify_intent)
-    graph.add_node("extract_entities", extract_entities)
+    graph.add_node("classify_and_extract", classify_and_extract)
     graph.add_node("check_policy", check_policy)
     graph.add_node("confirm", confirm)
     graph.add_node("execute_tools", execute_tools)
     graph.add_node("handle_error", handle_error)
     graph.add_node("generate_response", generate_response)
 
-    graph.set_entry_point("classify_intent")
-    graph.add_edge("classify_intent", "extract_entities")
-    graph.add_edge("extract_entities", "check_policy")
+    graph.set_entry_point("classify_and_extract")
+    graph.add_edge("classify_and_extract", "check_policy")
     graph.add_edge("check_policy", "confirm")
 
     graph.add_conditional_edges(

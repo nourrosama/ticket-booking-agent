@@ -35,14 +35,13 @@ python run_agent.py --interactive --customer-id 3
 
 ## 2. Architecture — nodes and edges
 
-The graph (`agent/graph.py`) has 7 nodes. `AgentState` (`agent/state.py`) is the shared
+The graph (`agent/graph.py`) has 6 nodes. `AgentState` (`agent/state.py`) is the shared
 dict every node reads from and writes back into.
 
 ```mermaid
 flowchart TD
-    START([customer message]) --> IC[Intent Classifier]
-    IC --> EE[Entity Extractor]
-    EE --> PC[Policy Checker]
+    START([customer message]) --> CE[Classify & Extract]
+    CE --> PC[Policy Checker]
     PC --> CF[Confirmation]
     CF -->|policy failed, or<br/>waiting on confirmation| RG[Response Generator]
     CF -->|clear to proceed| TE[Tool Executor]
@@ -57,16 +56,15 @@ flowchart TD
 
 | # | Node | File | LLM? | Job |
 |---|---|---|---|---|
-| 1 | Intent Classifier | `agent/nodes/intent_classifier.py` | Yes | Labels the message with one or more intents: `book`, `inquiry`, `refund`, `out_of_scope` |
-| 2 | Entity Extractor | `agent/nodes/entity_extractor.py` | Yes | Pulls out route/booking/payment details actually present in the message — never guesses missing ones |
-| 3 | Policy Checker | `agent/nodes/policy_checker.py` | No | Runs a per-intent check for each intent; combines results into an overall policy verdict |
-| 4 | Confirmation | `agent/nodes/confirmation.py` | No | Applies the mode rule — batch always auto-confirms, interactive only confirms if a prior turn already said yes |
-| 5 | Tool Executor | `agent/nodes/tool_executor.py` | No | The only node that calls the 5 DB tools; iterates over per-intent policy results and calls the right tool(s) for each passing intent |
-| 6 | Error Handler | `agent/nodes/error_handler.py` | No | The repair loop — retries one specific fixable error type, capped at `MAX_RETRIES = 2`; everything else is terminal |
-| 7 | Response Generator | `agent/nodes/response_generator.py` | Yes | Writes the customer-facing reply, using a plain-Python situation classification (declined/needs_confirmation/failed/completed) so it can't claim something happened when it didn't |
+| 1 | Classify & Extract | `agent/nodes/classify_and_extract.py` | Yes | One LLM call: labels the message with one or more intents **and** pulls out all entities (route, booking ref, payment method, etc.) |
+| 2 | Policy Checker | `agent/nodes/policy_checker.py` | No | Runs a per-intent check for each intent; combines results into an overall policy verdict |
+| 3 | Confirmation | `agent/nodes/confirmation.py` | No | Applies the mode rule — batch always auto-confirms, interactive only confirms if a prior turn already said yes |
+| 4 | Tool Executor | `agent/nodes/tool_executor.py` | No | The only node that calls the 5 DB tools; iterates over per-intent policy results and calls the right tool(s) for each passing intent |
+| 5 | Error Handler | `agent/nodes/error_handler.py` | No | The repair loop — retries one specific fixable error type, capped at `MAX_RETRIES = 2`; everything else is terminal |
+| 6 | Response Generator | `agent/nodes/response_generator.py` | Yes | Writes the customer-facing reply, using a plain-Python situation classification (declined/needs_confirmation/failed/completed) so it can't claim something happened when it didn't |
 
 **The edges, in words:**
-1. `classify_intent → extract_entities → check_policy → confirm` — always, in that order.
+1. `classify_and_extract → check_policy → confirm` — always, in that order.
 2. After `confirm`: if policy failed, **or** confirmation is still pending → straight to
    `generate_response` (nothing gets executed). Otherwise → `execute_tools`.
 3. After `execute_tools`: error → `handle_error`. Success → `generate_response`.

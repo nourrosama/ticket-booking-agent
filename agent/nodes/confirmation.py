@@ -5,10 +5,10 @@ Batch mode: auto-confirms every destructive action (no human present).
 
 Interactive mode: when confirmation is required, calls LangGraph's
 interrupt() — this pauses the graph mid-execution, saves state to the
-checkpointer, and hands control back to the CLI. The CLI shows the
-pending question, then calls graph.invoke(Command(resume=<user reply>))
-with the same thread_id. The graph resumes here, interrupt() returns
-the reply, and we set confirmed accordingly.
+checkpointer, and hands control back to the CLI. The CLI reads the
+interrupt value (a human-readable prompt) and displays it as the
+agent's message. When the user replies, Command(resume=<reply>) restarts
+execution here; interrupt() returns the reply and we set confirmed.
 
 No LLM call in this node.
 """
@@ -24,8 +24,24 @@ def confirm(state: AgentState) -> dict:
     if state["mode"] == "batch":
         return {"confirmed": True}  # batch always auto-confirms
 
-    # Interactive: pause here — the graph saves state and returns to the CLI.
-    # When the user replies, Command(resume=<reply>) restarts from this line.
-    human_response = interrupt("Action requires your confirmation. Reply yes to proceed.")
+    # Build a clear, informative prompt from what we already know
+    intents = state.get("intents", [])
+    policy_reason = state.get("policy_reason")
+
+    action_parts = []
+    if "book" in intents:
+        action_parts.append("book a ticket")
+    if "refund" in intents:
+        action_parts.append("process a refund/cancellation")
+    action = " and ".join(action_parts) if action_parts else "proceed with this action"
+
+    prompt = f"I'm about to {action}."
+    if policy_reason:
+        prompt += f" {policy_reason}"
+    prompt += " Reply yes to confirm or no to cancel."
+
+    # Pause here — the CLI will display `prompt` and wait for input.
+    # Command(resume=<user reply>) restarts from this line.
+    human_response = interrupt(prompt)
     confirmed = str(human_response).strip().lower() in ("yes", "y", "confirm", "ok", "proceed")
     return {"confirmed": confirmed}

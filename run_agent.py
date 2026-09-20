@@ -197,11 +197,20 @@ def run_interactive(customer_id: int) -> None:
                 # Graph is waiting for confirmation — resume with the user's reply
                 try:
                     state = invoke_with_retry(graph, Command(resume=user_input), config=config)
-                    _print_response(state)
+                    # Check if the graph paused again (unlikely but safe)
+                    resume_snapshot = graph.get_state(config)
+                    if resume_snapshot.tasks:
+                        interrupt_value = next(
+                            (str(intr.value) for task in resume_snapshot.tasks for intr in task.interrupts),
+                            "Please confirm to proceed (yes/no):",
+                        )
+                        _print_response({**state, "final_response": interrupt_value})
+                    else:
+                        _print_response(state)
+                        current_thread_id = None
                 except Exception as exc:
                     console.print(f"[red]Error: {exc}[/red]")
-                finally:
-                    current_thread_id = None  # this thread is done either way
+                    current_thread_id = None
                 continue
 
         # --- Combine with a held-over partial request, if any ---
@@ -219,11 +228,19 @@ def run_interactive(customer_id: int) -> None:
                 "mode": "interactive",
             }, config=config)
 
-            _print_response(state)
-
-            # If the graph completed without interrupting, clear the thread
+            # Check whether the graph paused at an interrupt (confirmation pending)
+            # BEFORE printing — if paused, final_response hasn't been set yet.
             snapshot = graph.get_state(config)
-            if not snapshot.tasks:
+            if snapshot.tasks:
+                # Extract the interrupt prompt from the paused task
+                interrupt_value = next(
+                    (str(intr.value) for task in snapshot.tasks for intr in task.interrupts),
+                    "Please confirm to proceed (yes/no):",
+                )
+                _print_response({**state, "final_response": interrupt_value})
+                # current_thread_id stays set — we resume on the next user input
+            else:
+                _print_response(state)
                 current_thread_id = None
 
             # Hold partial message if the policy is recoverable
